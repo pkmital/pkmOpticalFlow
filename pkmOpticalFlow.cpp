@@ -87,11 +87,11 @@ namespace cv {
     tvl1flow::tvl1flow()
     {
         tau            = 0.25;
-        lambda         = 0.15;
+        lambda         = 0.05;
         theta          = 0.3;
         nscales        = 3;
-        warps          = 1;
-        epsilon        = 0.05;
+        warps          = 3;
+        epsilon        = 0.001;
         iterations     = 50;
         useInitialFlow = false;
     }

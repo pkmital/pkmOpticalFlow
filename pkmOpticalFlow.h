@@ -79,11 +79,13 @@
 #include "ofxOpenCv.h"
 #include "opencv.hpp"
 
+#ifdef WITH_HDF5
 #include <hdf5.h>
 #if (H5_VERS_MINOR==6)
 #include "H5LT.h"
 #else
 #include "hdf5_hl.h"
+#endif
 #endif
 
 namespace cv
@@ -161,54 +163,58 @@ class pkmOpticalFlow
 public:
     pkmOpticalFlow()
     {
-        
+        b_allocated = false;
     }
     
     void allocate(int w, int h, int nframes = 0)
     {
+        if(b_allocated && width == w && height == h)
+        {
+            return;
+        }
         width = w;
         height = h;
-        numPrevImgs = 2;
+        num_prev_imgs = 2;
         
-        widthRsz = min(256, width);
-        ratio = (float)widthRsz / (float)width;
-        heightRsz = height * ratio;
+        width_rsz = min(256, width);
+        ratio = (float)width_rsz / (float)width;
+        height_rsz = height * ratio;
         
-        histSize = 50;
+        hist_size = 50;
         
-        printf("[pkmOpticalFlow]::allocate - resized: %d x %d -> %d x %d\n", width, height, widthRsz, heightRsz);
+        printf("[pkmOpticalFlow]::allocate - resized: %d x %d -> %d x %d\n", width, height, width_rsz, height_rsz);
         
-        colorImg.allocate(width, height);
-        colorImgRsz.allocate(widthRsz, heightRsz);
+        color_img.allocate(width, height);
+        color_img_rsz.allocate(width_rsz, height_rsz);
         
-        grayImg.allocate(widthRsz, heightRsz);
+        gray_img.allocate(width_rsz, height_rsz);
         
-        prevGrayImgs.resize(numPrevImgs);
-        for(int i = 0; i < numPrevImgs; i++)
-            prevGrayImgs[i].allocate(widthRsz, heightRsz);
+        prev_gray_imgs.resize(num_prev_imgs);
+        for(int i = 0; i < num_prev_imgs; i++)
+            prev_gray_imgs[i].allocate(width_rsz, height_rsz);
         
-        flowColorImg.allocate(widthRsz, heightRsz);
-        magImg.allocate(widthRsz, heightRsz);
-        magImgCrop.allocate(widthRsz - 10, heightRsz - 10);
+        flow_color_img.allocate(width_rsz, height_rsz);
+        mag_img.allocate(width_rsz, height_rsz);
+        mag_img_crop.allocate(width_rsz - 10, height_rsz - 10);
         
-        devImg.allocate(widthRsz, heightRsz);
+        dev_img.allocate(width_rsz, height_rsz);
         
         mag_max_avg = 1.0;
         
-        flowImg = cv::Mat(heightRsz, widthRsz, CV_32FC2);
+        flow_img = cv::Mat(height_rsz, width_rsz, CV_32FC2);
         
         if (nframes == 0)
-            numSpectra = 500;
+            num_spectra = 500;
         else
-            numSpectra = nframes;
+            num_spectra = nframes;
         
         frame_i = 0;
         
-        numFreq = 180;  // <= than 360
-        flowEntropy = cv::Mat::zeros(1, numSpectra, CV_32FC1);
-        specHOMG = cv::Mat::zeros(numFreq, numSpectra, CV_32FC1);
-        pSpecHOMG = cv::Mat::zeros(numFreq, numSpectra, CV_32FC1);
-        specHOMG_img8 = cv::Mat::zeros(numFreq, numSpectra, CV_8UC1);
+        num_freq = 180;  // <= than 360
+        flow_entropy = cv::Mat::zeros(1, num_spectra, CV_32FC1);
+        spec_HOMG = cv::Mat::zeros(num_freq, num_spectra, CV_32FC1);
+        p_spec_HOMG = cv::Mat::zeros(num_freq, num_spectra, CV_32FC1);
+        spec_HOMG_img8 = cv::Mat::zeros(num_freq, num_spectra, CV_8UC1);
         
 //        flow.setIterations(100);
 //        flow.setWarps(2);
@@ -217,38 +223,46 @@ public:
 //        flow.setTau(0.25);
 //        flow.setLambda(0.1);
 //        flow.setUseInitialFlow(false);
+        
+        b_allocated = true;
+    }
+    
+    float getMaxMotionMagnitude()
+    {
+        return mag_max_avg;
     }
     
     void update(const ofPixelsRef &pixels)
     {
-        colorImg.setFromPixels(pixels);
-        colorImgRsz.scaleIntoMe(colorImg);
-        colorImgRsz.convertRgbToHsv();
-        colorImgRsz.convertToGrayscalePlanarImage(grayImg, 2);
+        color_img.setFromPixels(pixels);
+        color_img_rsz.scaleIntoMe(color_img);
+        color_img_rsz.convertRgbToHsv();
+        color_img_rsz.convertToGrayscalePlanarImage(gray_img, 2);
         
-        cv::Mat I0(grayImg.getCvImage()), I1(prevGrayImgs[0].getCvImage());
+        cv::Mat I0(gray_img.getCvImage()), I1(prev_gray_imgs[0].getCvImage());
         
-        flow.calc(I0, I1, flowImg);
+        flow.calc(I0, I1, flow_img);
         
         // convert to color, thanks to: http://stackoverflow.com/questions/7693561/opencv-displaying-a-2-channel-image-optical-flow
         //extraxt x and y channels
-        split(flowImg, xy);
+        split(flow_img, xy);
         
         //calculate angle and magnitude
-        cv::Mat magnitudeCrop(magImgCrop.getCvImage());
-        magnitude = cv::Mat(magImg.getCvImage());
+        cv::Mat magnitude_crop(mag_img_crop.getCvImage());
+        magnitude = cv::Mat(mag_img.getCvImage());
         cartToPolar(xy[0], xy[1], magnitude, angle, true);
-        cv::Rect roi(5, 5, magImg.getWidth() - 10, magImg.getHeight() - 10);
-        cv::Mat(magnitude, roi).copyTo(magnitudeCrop);
-        cv::copyMakeBorder(magnitudeCrop, magnitude,
+        cv::Rect roi(5, 5, mag_img.getWidth() - 10, mag_img.getHeight() - 10);
+        cv::Mat(magnitude, roi).copyTo(magnitude_crop);
+        cv::copyMakeBorder(magnitude_crop, magnitude,
                            5, 5,
                            5, 5, cv::BORDER_CONSTANT,
                            cvScalar( 0, 0, 0 ));
-        magImg.flagImageChanged();
+        mag_img.flagImageChanged();
         
         //translate magnitude to range [0;1]
         minMaxLoc(magnitude, NULL, &mag_max, NULL, &pt_max);
-        mag_max_avg = mag_max * 0.1 + mag_max_avg * 0.9;
+//        mag_max_avg = mag_max * 0.2 + mag_max_avg * 0.8;
+        mag_max_avg = 8.0;
         magnitude.convertTo(magnitude, -1, 1.0/mag_max_avg);
         
         //build hsv image
@@ -258,39 +272,54 @@ public:
         merge(_hsv, 3, hsv);
         
         //convert to BGR and show
-        cv::Mat ofxrgb(flowColorImg.getCvImage());
+        cv::Mat ofxrgb(flow_color_img.getCvImage());
         cvtColor(hsv, rgb, cv::COLOR_HSV2RGB);
         
         rgb = rgb * 255.0;
         rgb.convertTo(ofxrgb, CV_8U);
-        flowColorImg.flagImageChanged();
+        flow_color_img.flagImageChanged();
         
-        prevGrayImgs.push_back(grayImg);
-        if(prevGrayImgs.size() > numPrevImgs)
+        prev_gray_imgs.push_back(gray_img);
+        if(prev_gray_imgs.size() > num_prev_imgs)
         {
-            prevGrayImgs.erase(prevGrayImgs.begin());
+            prev_gray_imgs.erase(prev_gray_imgs.begin());
         }
     }
     
     void computeHistogramOfOrientedMotionGradients()
     {
-        histOMG = cv::Mat::zeros(numFreq, 1, CV_32F);
+        hist_OMG = cv::Mat::zeros(num_freq, 1, CV_32F);
         for(int i = 0; i < magnitude.rows; i++)
         {
             for(int j = 0; j < magnitude.cols; j++)
             {
-                histOMG.at<float>(floor(angle.at<float>(i,j)) * ((float)numFreq/360.0), 0) += magnitude.at<float>(i,j)/sqrtf(magnitude.rows*magnitude.cols);
+                hist_OMG.at<float>(floor(angle.at<float>(i,j)) * ((float)num_freq/360.0), 0) += magnitude.at<float>(i,j)/sqrtf(magnitude.rows*magnitude.cols);
             }
         }
         
+        hist_OMG = hist_OMG / cv::sum(hist_OMG)[0];
+//        cv::Mat hist_OMGLog = cv::Mat::zeros(num_freq, 1, CV_32F);
+//        cv::log(hist_OMG, hist_OMGLog);
+    }
+    
+    cv::Mat getHistOMG()
+    {
+        return hist_OMG;
+    }
+    
+    
+    void computeSpectrumOfOrientedMotionGradients()
+    {
+        computeHistogramOfOrientedMotionGradients();
+
 //        float heightScalar = 100.0;
-//        cv::Mat img = cv::Mat::zeros(heightScalar, numFreq, CV_8UC3);
+//        cv::Mat img = cv::Mat::zeros(heightScalar, num_freq, CV_8UC3);
 //        
-//        for(int i = 1; i < numFreq; i++)
+//        for(int i = 1; i < num_freq; i++)
 //        {
 //            cv::line(img,
-//                     cv::Point(i-1, histOMG.at<float>(i-1,0)*heightScalar),
-//                     cv::Point(i, histOMG.at<float>(i-1,0)*heightScalar),
+//                     cv::Point(i-1, hist_OMG.at<float>(i-1,0)*heightScalar),
+//                     cv::Point(i, hist_OMG.at<float>(i-1,0)*heightScalar),
 //                     cv::Scalar(255,255,255));//, 3, 4);
 //        }
 //        
@@ -298,41 +327,41 @@ public:
 //        cv::imshow("HOMG", img);
         
         
-        cv::Mat sourceROI = pSpecHOMG(cv::Rect(1,0,numSpectra-1,numFreq));
-        sourceROI.copyTo(specHOMG(cv::Rect(0,0,numSpectra-1,numFreq)));
-        histOMG.copyTo(specHOMG(cv::Rect(numSpectra-1,0,1,numFreq)));
+        cv::Mat source_ROI = p_spec_HOMG(cv::Rect(1,0,num_spectra-1,num_freq));
+        source_ROI.copyTo(spec_HOMG(cv::Rect(0,0,num_spectra-1,num_freq)));
+        hist_OMG.copyTo(spec_HOMG(cv::Rect(num_spectra-1,0,1,num_freq)));
         
-        specHOMG.convertTo(specHOMG_img8,CV_8UC1,255.0);
+        spec_HOMG.convertTo(spec_HOMG_img8,CV_8UC1,255.0);
         
-        cv::Mat cmImg(specHOMG.rows, specHOMG.cols, CV_8UC3);
-        cv::applyColorMap(specHOMG_img8, cmImg, cv::COLORMAP_JET);
+        cv::Mat cmImg(spec_HOMG.rows, spec_HOMG.cols, CV_8UC3);
+        cv::applyColorMap(spec_HOMG_img8, cmImg, cv::COLORMAP_JET);
         
-        cv::resize(cmImg, cmImg, cv::Size(512, specHOMG.cols), 0, 0, cv::INTER_NEAREST);
+        cv::resize(cmImg, cmImg, cv::Size(512, spec_HOMG.cols), 0, 0, cv::INTER_NEAREST);
         
-//        cv::namedWindow("HOMG Spectra", CV_WINDOW_FREERATIO);
-//        cv::imshow("HOMG Spectra", cmImg);
+        cv::namedWindow("HOMG Spectra", CV_WINDOW_FREERATIO);
+        cv::imshow("HOMG Spectra", cmImg);
         
-        specHOMG.copyTo(pSpecHOMG);
+        spec_HOMG.copyTo(p_spec_HOMG);
         
 //        // convert to probabilistic interpretation
-//        histOMG = histOMG / cv::sum(histOMG)[0];
-//        cv::Mat histOMGLog = cv::Mat::zeros(numFreq, 1, CV_32F);
-//        cv::log(histOMG, histOMGLog);
+//        hist_OMG = hist_OMG / cv::sum(hist_OMG)[0];
+//        cv::Mat hist_OMGLog = cv::Mat::zeros(num_freq, 1, CV_32F);
+//        cv::log(hist_OMG, hist_OMGLog);
 //        
-//        flowEntropy.at<float>(0, frame_i) = cv::sum(histOMG.mul(histOMGLog))[0];
+//        flow_entropy.at<float>(0, frame_i) = cv::sum(hist_OMG.mul(hist_OMGLog))[0];
 //        frame_i++;
 //        
 //        
-//        cv::Mat img2 = cv::Mat::zeros(heightScalar, numSpectra, CV_8UC3);
+//        cv::Mat img2 = cv::Mat::zeros(heightScalar, num_spectra, CV_8UC3);
 //        
-//        for(int i = 1; i < numSpectra; i++)
+//        for(int i = 1; i < num_spectra; i++)
 //        {
 //            cv::line(img2,
-//                     cv::Point(i-1, flowEntropy.at<float>(0,i-1)*heightScalar),
-//                     cv::Point(i, flowEntropy.at<float>(0,i-1)*heightScalar),
+//                     cv::Point(i-1, flow_entropy.at<float>(0,i-1)*heightScalar),
+//                     cv::Point(i, flow_entropy.at<float>(0,i-1)*heightScalar),
 //                     cv::Scalar(255,255,255));//, 3, 4);
 //            
-//            cout << flowEntropy.at<float>(0,i-1) << endl;
+//            cout << flow_entropy.at<float>(0,i-1) << endl;
 //        }
 //        
 //        cv::namedWindow("Flow Entropy", CV_WINDOW_FREERATIO);
@@ -353,8 +382,8 @@ public:
         
         // get dims. Just 2D for now.
         hsize_t dims[2];
-        dims[0] = specHOMG.rows;
-        dims[1] = specHOMG.cols;
+        dims[0] = spec_HOMG.rows;
+        dims[1] = spec_HOMG.cols;
         
         // do it.
         if (H5LTfind_dataset(file_id, dataset_name.c_str())==1) {
@@ -368,7 +397,7 @@ public:
                                          2,
                                          dims,
                                          native_dtype,
-                                         specHOMG.ptr());
+                                         spec_HOMG.ptr());
 
         if (status < 0) {
             std::string error_msg("Error making dataset: ");
@@ -387,50 +416,50 @@ public:
     
     void exportHOMGToPPM(string path = "", string token = "")
     {
-        cv::imwrite(ofToDataPath(path + token + "homg.ppm", true), specHOMG);
+        cv::imwrite(ofToDataPath(path + token + "homg.ppm", true), spec_HOMG);
     }
     
     void exportHOMGToYML(string path = "", string token = "")
     {
         cv::FileStorage fs(path + token + "homg.yml", cv::FileStorage::WRITE );
-        fs << "homg" << specHOMG;
-//        fs << "flowentropy" << flowEntropy;
+        fs << "homg" << spec_HOMG;
+//        fs << "flowentropy" << flow_entropy;
         fs.release();
     }
     
     void drawColorImg(int x, int y, int w, int h)
     {
-        colorImg.draw(x,y,w,h);
+        color_img.draw(x,y,w,h);
     }
     
     void drawGrayImg(int x, int y, int w, int h)
     {
-        grayImg.draw(x,y,w,h);
+        gray_img.draw(x,y,w,h);
     }
     
     void drawPrevGrayImg(int x, int y, int w, int h)
     {
-        prevGrayImgs[0].draw(x,y,w,h);
+        prev_gray_imgs[0].draw(x,y,w,h);
     }
     
     void drawMagnitude(int x, int y, int w, int h)
     {
-        magImg.draw(x, y, w, h);
+        mag_img.draw(x, y, w, h);
     }
     
-    ofPixelsRef getFlowPixelsRef()
+    ofPixels& getFlowPixelsRef()
     {
-        return magImg.getPixelsRef();
+        return mag_img.getPixels();
     }
     
-    ofPixelsRef getColorFlowPixelsRef()
+    ofPixels& getColorFlowPixelsRef()
     {
-        return flowColorImg.getPixelsRef();
+        return flow_color_img.getPixels();
     }
     
     void drawColorFlow(int x, int y, int w, int h)
     {
-        flowColorImg.draw(x, y, w, h);
+        flow_color_img.draw(x, y, w, h);
     }
     
     double getMaximum()
@@ -445,9 +474,25 @@ public:
     
     double getFlowEntropy()
     {
-        cv::Mat magnitude(magImg.getCvImage());
+        cv::Mat magnitude(mag_img.getCvImage());
         return getEntropy(magnitude);
     }
+    
+    double getFlowMaxForROI(int x, int y, int w, int h)
+    {
+        x*=ratio;
+        y*=ratio;
+        w*=ratio;
+        h*=ratio;
+        IplImage *img = mag_img.getCvImage();
+        CvRect old_roi = cvGetImageROI(img);
+        cvSetImageROI(img, cvRect(x,y,w,h));
+        double minval, maxval;
+        cvMinMaxLoc(img, &minval, &maxval);
+        cvSetImageROI(img,old_roi);
+        return maxval;
+    }
+
     
     double getFlowMeanForROI(int x, int y, int w, int h)
     {
@@ -455,7 +500,7 @@ public:
         y*=ratio;
         w*=ratio;
         h*=ratio;
-        IplImage *img = magImg.getCvImage();
+        IplImage *img = mag_img.getCvImage();
         CvRect old_roi = cvGetImageROI(img);
         cvSetImageROI(img, cvRect(x,y,w,h));
         CvScalar c = cvAvg(img);
@@ -465,14 +510,14 @@ public:
     
     double getFlowMean()
     {
-        cv::Mat magnitude(magImg.getCvImage());
+        cv::Mat magnitude(mag_img.getCvImage());
         return cv::mean(magnitude)[0];
     }
     
     double getFlowDeviance()
     {
         cv::Scalar mean, dev;
-        cv::Mat magnitude(magImg.getCvImage());
+        cv::Mat magnitude(mag_img.getCvImage());
         cv::meanStdDev(magnitude, mean, dev);
         return dev[0];
     }
@@ -484,33 +529,33 @@ public:
         w*=ratio;
         h*=ratio;
         
-        cv::Mat magnitude(magImg.getCvImage());
+        cv::Mat magnitude(mag_img.getCvImage());
         cv::Mat roi = magnitude(cv::Rect(x,y,w,h));
         cv::Scalar mean, dev;
         cv::meanStdDev(roi, mean, dev);
         return dev[0];
     }
     
-    void computeFlowDevianceImage(int kernelSize = 15)
+    void computeFlowDevianceImage(int kernel_size = 15)
     {
-        assert(kernelSize < widthRsz && kernelSize < heightRsz);
-        int radius = ceil(kernelSize / 2.0);
+        assert(kernel_size < width_rsz && kernel_size < height_rsz);
+        int radius = ceil(kernel_size / 2.0);
         
-        cv::Mat devMat(devImg.getCvImage());
+        cv::Mat devMat(dev_img.getCvImage());
         
-        for (int i = radius; i < widthRsz - radius; i++) {
-             for (int j = radius; j < heightRsz - radius; j++) {
-                 devMat.at<float>(i,j) = getFlowDevianceForROI(i - radius, j - radius, kernelSize, kernelSize);
+        for (int i = radius; i < width_rsz - radius; i++) {
+             for (int j = radius; j < height_rsz - radius; j++) {
+                 devMat.at<float>(i,j) = getFlowDevianceForROI(i - radius, j - radius, kernel_size, kernel_size);
              }
         }
         
-        devImg.flagImageChanged();
+        dev_img.flagImageChanged();
         
     }
     
     void drawFlowDeviance(int x, int y, int w, int h)
     {
-        devImg.draw(x, y, w, h);
+        dev_img.draw(x, y, w, h);
     }
     
 private:
@@ -522,46 +567,48 @@ private:
         cv::Mat hist;
         
         int channels[] = {0};
-        int histSize[] = {32};
+        int hist_size[] = {32};
         float range[] = { 0, 1 };
         const float* ranges[] = { range };
         
         calcHist( &img, 1, channels, cv::Mat(), // do not use mask
-                 hist, 1, histSize, ranges,
+                 hist, 1, hist_size, ranges,
                  true, // the histogram is uniform
                  false );
         
-        cv::Mat histNorm = hist / (img.rows * img.cols);
+        cv::Mat hist_norm = hist / (img.rows * img.cols);
         
         float entropy = 0.0;
-        for( int i = 0; i < histNorm.rows; i++ )
+        for( int i = 0; i < hist_norm.rows; i++ )
         {
-            float Hc = histNorm.at<float>(i,0);
+            float Hc = hist_norm.at<float>(i,0);
             entropy += -Hc * log10(Hc + 0.0001);
         }
         
         return entropy;
     }
     
-    ofxCvColorImage         colorImg, colorImgRsz, flowColorImg;
-    ofxCvGrayscaleImage     grayImg;
-    vector<ofxCvGrayscaleImage>     prevGrayImgs;
-    ofxCvFloatImage         magImg, magImgCrop, devImg, devImgRsz;
-    cv::Mat                 flowImg;
+    ofxCvColorImage         color_img, color_img_rsz, flow_color_img;
+    ofxCvGrayscaleImage     gray_img;
+    vector<ofxCvGrayscaleImage>     prev_gray_imgs;
+    ofxCvFloatImage         mag_img, mag_img_crop, dev_img, dev_imgRsz;
+    cv::Mat                 flow_img;
     cv::Mat                 _hsv[3], hsv;
     cv::Mat                 rgb, rgb8;
     cv::Mat                 xy[2], angle, magnitude;
-    cv::Mat                 histOMG, specHOMG, pSpecHOMG, specHOMG_img8, flowEntropy;
-    int                     numSpectra, numFreq;
+    cv::Mat                 hist_OMG, spec_HOMG, p_spec_HOMG, spec_HOMG_img8, flow_entropy;
+    int                     num_spectra, num_freq;
     cv::tvl1flow            flow;
     cv::Point               pt_max;
-    int                     numPrevImgs;
+    int                     num_prev_imgs;
     double                  mag_max;
     double                  mag_max_avg;
-    int                     histSize, frame_i;
+    int                     hist_size, frame_i;
     
     double                  ratio;
     
-    int                     width, height, widthRsz, heightRsz;
+    int                     width, height, width_rsz, height_rsz;
+    
+    bool                    b_allocated;
 };
 
