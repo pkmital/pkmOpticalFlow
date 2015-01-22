@@ -286,7 +286,7 @@ public:
         }
     }
     
-    void computeHistogramOfOrientedMotionGradients()
+    void computeHistogramOfOrientedMotionGradients(bool b_normalize = true)
     {
         hist_OMG = cv::Mat::zeros(1, num_freq, CV_32F);
         for(int i = 0; i < magnitude.rows; i++)
@@ -297,7 +297,8 @@ public:
             }
         }
         
-        hist_OMG = hist_OMG / cv::sum(hist_OMG)[0];
+        if(b_normalize)
+            hist_OMG = hist_OMG / cv::sum(hist_OMG)[0];
 //        cv::Mat hist_OMGLog = cv::Mat::zeros(num_freq, 1, CV_32F);
 //        cv::log(hist_OMG, hist_OMGLog);
     }
