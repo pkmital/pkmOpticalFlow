@@ -176,7 +176,7 @@ public:
         height = h;
         num_prev_imgs = 2;
         
-        width_rsz = min(256, width);
+        width_rsz = min(64, width);
         ratio = (float)width_rsz / (float)width;
         height_rsz = height * ratio;
         
@@ -210,7 +210,7 @@ public:
         
         frame_i = 0;
         
-        num_freq = 180;  // <= than 360
+        num_freq = 128;  // <= than 360
         flow_entropy = cv::Mat::zeros(1, num_spectra, CV_32FC1);
         spec_HOMG = cv::Mat::zeros(num_freq, num_spectra, CV_32FC1);
         p_spec_HOMG = cv::Mat::zeros(num_freq, num_spectra, CV_32FC1);
@@ -288,12 +288,12 @@ public:
     
     void computeHistogramOfOrientedMotionGradients()
     {
-        hist_OMG = cv::Mat::zeros(num_freq, 1, CV_32F);
+        hist_OMG = cv::Mat::zeros(1, num_freq, CV_32F);
         for(int i = 0; i < magnitude.rows; i++)
         {
             for(int j = 0; j < magnitude.cols; j++)
             {
-                hist_OMG.at<float>(floor(angle.at<float>(i,j)) * ((float)num_freq/360.0), 0) += magnitude.at<float>(i,j)/sqrtf(magnitude.rows*magnitude.cols);
+                hist_OMG.at<float>(0, floor(angle.at<float>(i,j)) * ((float)num_freq/360.0)) += magnitude.at<float>(i,j)/sqrtf(magnitude.rows*magnitude.cols);
             }
         }
         
