@@ -75,9 +75,11 @@
 #pragma once
 
 //#define WITH_HDF5
+#define USE_GPU
 
 #include "ofxOpenCv.h"
 #include "opencv.hpp"
+#include "opencv2/gpu/gpu.hpp"
 
 #ifdef WITH_HDF5
 #include <hdf5.h>
@@ -176,7 +178,7 @@ public:
         height = h;
         num_prev_imgs = 2;
         
-        width_rsz = min(64, width);
+        width_rsz = min(256, width);
         ratio = (float)width_rsz / (float)width;
         height_rsz = height * ratio;
         
@@ -232,7 +234,12 @@ public:
         return mag_max_avg;
     }
     
-    void update(const ofPixelsRef &pixels)
+    float getMeanMotionMagnitude()
+    {
+        return mag_mean;
+    }
+    
+    void update(ofPixelsRef &pixels)
     {
         color_img.setFromPixels(pixels);
         color_img_rsz.scaleIntoMe(color_img);
@@ -241,11 +248,25 @@ public:
         
         cv::Mat I0(gray_img.getCvImage()), I1(prev_gray_imgs[0].getCvImage());
         
+#ifdef USE_GPU
+        cv::gpu::GpuMat d_frame0(I0);
+        cv::gpu::GpuMat d_frame1(I1);
+        
+        cv::gpu::GpuMat d_fu, d_fv;
+        
+        flow(d_frame0, d_frame1, d_fu, d_fv);
+        
+        d_fu.download(xy[0]);
+        d_fv.download(xy[1]);
+        
+#else
         flow.calc(I0, I1, flow_img);
         
         // convert to color, thanks to: http://stackoverflow.com/questions/7693561/opencv-displaying-a-2-channel-image-optical-flow
         //extraxt x and y channels
         split(flow_img, xy);
+#endif
+        
         
         //calculate angle and magnitude
         cv::Mat magnitude_crop(mag_img_crop.getCvImage());
@@ -261,8 +282,10 @@ public:
         
         //translate magnitude to range [0;1]
         minMaxLoc(magnitude, NULL, &mag_max, NULL, &pt_max);
-//        mag_max_avg = mag_max * 0.2 + mag_max_avg * 0.8;
-        mag_max_avg = 8.0;
+        mag_mean = mean(magnitude)[0];
+        
+        mag_max_avg = mag_max * 0.9 + mag_max_avg * 0.1;
+//        mag_max_avg = 8.0;
         magnitude.convertTo(magnitude, -1, 1.0/mag_max_avg);
         
         //build hsv image
@@ -286,7 +309,7 @@ public:
         }
     }
     
-    void computeHistogramOfOrientedMotionGradients(bool b_normalize = true)
+    void computeHistogramOfOrientedMotionGradients(bool b_normalize = false)
     {
         hist_OMG = cv::Mat::zeros(1, num_freq, CV_32F);
         for(int i = 0; i < magnitude.rows; i++)
@@ -448,6 +471,9 @@ public:
         mag_img.draw(x, y, w, h);
     }
     
+
+#if(1)
+    
     ofPixels& getFlowPixelsRef()
     {
         return mag_img.getPixels();
@@ -457,6 +483,20 @@ public:
     {
         return flow_color_img.getPixels();
     }
+    
+#else
+    
+    ofPixels& getFlowPixelsRef()
+    {
+        return mag_img.getPixelsRef();
+    }
+    
+    ofPixels& getColorFlowPixelsRef()
+    {
+        return flow_color_img.getPixelsRef();
+    }
+    
+#endif
     
     void drawColorFlow(int x, int y, int w, int h)
     {
@@ -599,10 +639,15 @@ private:
     cv::Mat                 xy[2], angle, magnitude;
     cv::Mat                 hist_OMG, spec_HOMG, p_spec_HOMG, spec_HOMG_img8, flow_entropy;
     int                     num_spectra, num_freq;
+#ifdef USE_GPU
+    cv::gpu::OpticalFlowDual_TVL1_GPU     flow;
+#else
     cv::tvl1flow            flow;
+#endif
+    
     cv::Point               pt_max;
     int                     num_prev_imgs;
-    double                  mag_max;
+    double                  mag_max, mag_mean;
     double                  mag_max_avg;
     int                     hist_size, frame_i;
     
